@@ -26,7 +26,7 @@ model = dict(
         num_outs=5,
         relu_before_extra_convs=True),
     bbox_head=dict(
-        type='FCOSHead',
+        type='MYFCOSHead',
         num_classes=20,
         in_channels=256,
         stacked_convs=4,
@@ -39,11 +39,13 @@ model = dict(
             alpha=0.25,
             loss_weight=1.0),
         loss_bbox=dict(type='IoULoss', loss_weight=1.0),
+        # loss_centerness=dict(
+        #     type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)),
         loss_centerness=dict(
-            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)),
+            type='L1Loss', loss_weight=1.0)),
     # training and testing settings
     train_cfg=dict(
-        label_type2weight=[1, 2, 2],
+        label_type2weight=[1, 1, 1],
         assigner=dict(
             type='MaxIoUAssigner',
             pos_iou_thr=0.5,
@@ -63,7 +65,7 @@ img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[1.0, 1.0, 1.0], to_rgb=False)
 train_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='LoadAnnotations', with_bbox=True),
+    dict(type='LoadAnnotations', with_bbox=True, with_point=True),
     dict(type='Resize', img_scale=(1000, 600), keep_ratio=True),
     dict(type='RandomFlip', flip_ratio=0.5),
     dict(type='STACTransform', aug_type='strong', magnitude=6, weighted_inbox_selection=True),

@@ -12,7 +12,7 @@ INF = 1e8
 
 
 @HEADS.register_module()
-class FCOSHead(AnchorFreeHead):
+class MYFCOSHead(AnchorFreeHead):
     """Anchor-free head used in `FCOS <https://arxiv.org/abs/1904.01355>`_.
 
     The FCOS head does not use anchor boxes. Instead bounding boxes are
@@ -64,6 +64,7 @@ class FCOSHead(AnchorFreeHead):
                  center_sample_radius=1.5,
                  norm_on_bbox=False,
                  centerness_on_reg=False,
+                 centerness_dis=50,
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -167,6 +168,7 @@ class FCOSHead(AnchorFreeHead):
              gt_bboxes,
              gt_labels,
              img_metas,
+             gt_points,
              gt_bboxes_ignore=None):
         """Compute loss of the head.
 
@@ -194,8 +196,8 @@ class FCOSHead(AnchorFreeHead):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
-        labels, bbox_targets = self.get_targets(all_level_points, gt_bboxes,
-                                                gt_labels)
+        labels, bbox_targets, point_dis = self.get_targets(all_level_points, gt_bboxes,
+                                                gt_labels, gt_points)
 
         num_imgs = cls_scores[0].size(0)
         # flatten cls_scores, bbox_preds and centerness
@@ -216,14 +218,18 @@ class FCOSHead(AnchorFreeHead):
         flatten_centerness = torch.cat(flatten_centerness)
         flatten_labels = torch.cat(labels)
         flatten_bbox_targets = torch.cat(bbox_targets)
+        flatten_point_dis = torch.cat(point_dis)
         # repeat points to align with bbox_preds
         flatten_points = torch.cat(
             [points.repeat(num_imgs, 1) for points in all_level_points])
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
         bg_class_ind = self.num_classes
-        pos_inds = ((flatten_labels >= 0)
+        pos_inds = ((flatten_point_dis > 0) & (flatten_labels >= 0)
                     & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
+        # pos_inds = ((flatten_labels >= 0)
+        #             & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
+        # pos_centerness_inds = ((flatten_point_dis > 0)).nonzero().reshape(-1)
         num_pos = torch.tensor(
             len(pos_inds), dtype=torch.float, device=bbox_preds[0].device)
         num_pos = max(reduce_mean(num_pos), 1.0)
@@ -233,8 +239,11 @@ class FCOSHead(AnchorFreeHead):
         pos_bbox_preds = flatten_bbox_preds[pos_inds]
         pos_centerness = flatten_centerness[pos_inds]
         pos_bbox_targets = flatten_bbox_targets[pos_inds]
-        pos_centerness_targets = self.centerness_target(pos_bbox_targets)
+        # pos_centerness_targets = self.centerness_target(flatten_bbox_targets)
+        # centerness_targets = self.my_centerness_target(flatten_point_dis)
+        pos_centerness_targets = flatten_point_dis[pos_inds]
         # centerness weighted iou loss
+        # TODO 目前不知道有啥用
         centerness_denorm = max(
             reduce_mean(pos_centerness_targets.sum().detach()), 1e-6)
 
@@ -253,6 +262,14 @@ class FCOSHead(AnchorFreeHead):
         else:
             loss_bbox = pos_bbox_preds.sum()
             loss_centerness = pos_centerness.sum()
+        # pos_centerness_inds = ((flatten_point_dis > 0)).nonzero().reshape(-1)
+        # fc = flatten_centerness[pos_centerness_inds]
+        # ct = flatten_point_dis[pos_centerness_inds]
+        # num_pos = torch.tensor(
+        #     len(pos_centerness_inds), dtype=torch.float, device=bbox_preds[0].device)
+        # num_pos = max(reduce_mean(num_pos), 1.0)
+        # loss_centerness = self.loss_centerness(
+        #         pos_centerness, flatten_point_dis[pos_inds], avg_factor=num_pos)
 
         return dict(
             loss_cls=loss_cls,
@@ -481,7 +498,7 @@ class FCOSHead(AnchorFreeHead):
                              dim=-1) + stride // 2
         return points
 
-    def get_targets(self, points, gt_bboxes_list, gt_labels_list):
+    def get_targets(self, points, gt_bboxes_list, gt_labels_list, gt_points_list):
         """Compute regression, classification and centerness targets for points
         in multiple images.
 
@@ -513,11 +530,17 @@ class FCOSHead(AnchorFreeHead):
         # the number of points per img, per lvl
         num_points = [center.size(0) for center in points]
 
+        # TODO points 测试  用完要删除
+        # gt_points_list = []
+        # for i in range(len(gt_bboxes_list)):
+        #     gt_points_list.append(torch.tensor([[30,30],[200,200]], device=gt_bboxes_list[0].device))
+
         # get labels and bbox_targets of each image
-        labels_list, bbox_targets_list = multi_apply(
+        labels_list, bbox_targets_list, point_dis = multi_apply(
             self._get_target_single,
             gt_bboxes_list,
             gt_labels_list,
+            gt_points_list,
             points=concat_points,
             regress_ranges=concat_regress_ranges,
             num_points_per_lvl=num_points)
@@ -528,10 +551,12 @@ class FCOSHead(AnchorFreeHead):
             bbox_targets.split(num_points, 0)
             for bbox_targets in bbox_targets_list
         ]
+        point_dis_list = [dis.split(num_points, 0) for dis in point_dis]
 
         # concat per level image
         concat_lvl_labels = []
         concat_lvl_bbox_targets = []
+        concat_lvl_point_dis = []
         for i in range(num_levels):
             concat_lvl_labels.append(
                 torch.cat([labels[i] for labels in labels_list]))
@@ -540,16 +565,20 @@ class FCOSHead(AnchorFreeHead):
             if self.norm_on_bbox:
                 bbox_targets = bbox_targets / self.strides[i]
             concat_lvl_bbox_targets.append(bbox_targets)
-        return concat_lvl_labels, concat_lvl_bbox_targets
+            concat_lvl_point_dis.append(
+                torch.cat([dis[i] for dis in point_dis_list]))
+        return concat_lvl_labels, concat_lvl_bbox_targets, concat_lvl_point_dis
 
-    def _get_target_single(self, gt_bboxes, gt_labels, points, regress_ranges,
+    def _get_target_single(self, gt_bboxes, gt_labels, gt_points, points, regress_ranges,
                            num_points_per_lvl):
         """Compute regression and classification targets for a single image."""
         num_points = points.size(0)
         num_gts = gt_labels.size(0)
+        num_pts = gt_points.size(0)
         if num_gts == 0:
             return gt_labels.new_full((num_points,), self.num_classes), \
-                   gt_bboxes.new_zeros((num_points, 4))
+                   gt_bboxes.new_zeros((num_points, 4)), \
+                   gt_points.new_zeros((num_points,))
 
         areas = (gt_bboxes[:, 2] - gt_bboxes[:, 0]) * (
             gt_bboxes[:, 3] - gt_bboxes[:, 1])
@@ -559,10 +588,17 @@ class FCOSHead(AnchorFreeHead):
         regress_ranges = regress_ranges[:, None, :].expand(
             num_points, num_gts, 2)
         gt_bboxes = gt_bboxes[None].expand(num_points, num_gts, 4)
+        gt_points = gt_points[None].expand(num_points, num_pts, 2)
+        xs, ys = points[:, 0], points[:, 1]
+        xs = xs[:, None].expand(num_points, num_pts)
+        ys = ys[:, None].expand(num_points, num_pts)
+
+        point_dis = torch.sqrt(torch.pow(xs - gt_points[..., 0], 2) + torch.pow(ys - gt_points[..., 0], 2))
+        min = point_dis.min(-1)[0]
+        min = min.min()
         xs, ys = points[:, 0], points[:, 1]
         xs = xs[:, None].expand(num_points, num_gts)
         ys = ys[:, None].expand(num_points, num_gts)
-
         left = xs - gt_bboxes[..., 0]
         right = gt_bboxes[..., 2] - xs
         top = ys - gt_bboxes[..., 1]
@@ -623,8 +659,19 @@ class FCOSHead(AnchorFreeHead):
         labels = gt_labels[min_area_inds]
         labels[min_area == INF] = self.num_classes  # set as BG
         bbox_targets = bbox_targets[range(num_points), min_area_inds]
+        # TODO 重合情况选最小
+        point_dis_target = point_dis.min(-1)[0]
+        # TODO 不同level用不同的阈值
+        zero = torch.zeros_like(point_dis_target)
+        centerness_range = regress_ranges[..., 0, 1] / 4
+        point_dis_target = torch.where(point_dis_target <= centerness_range, 
+                                        (centerness_range - point_dis_target) / centerness_range, zero)
 
-        return labels, bbox_targets
+
+        # zero = torch.ones_like(gt_point_dis) * INF
+        # gt_point_dis = torch.where(gt_point_dis > 50.0 , zero, gt_point_dis)
+
+        return labels, bbox_targets, point_dis_target
 
     def centerness_target(self, pos_bbox_targets):
         """Compute centerness targets.
@@ -646,3 +693,19 @@ class FCOSHead(AnchorFreeHead):
                 left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
                     top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
         return torch.sqrt(centerness_targets)
+
+    def my_centerness_target(self, gt_point_dis):
+        """Compute centerness targets.
+
+        Args:
+            pos_bbox_targets (Tensor): BBox targets of positive bboxes in shape
+                (num_pos, 4)
+
+        Returns:
+            Tensor: Centerness target.
+        """
+        # TODO 两个点相交的区域如何处理 置0还是相加 要实验测试一下
+        # only calculate pos centerness targets, otherwise there may be nan
+        zero = torch.zeros_like(gt_point_dis)
+        gt_point_dis = torch.where(gt_point_dis > 50.0 , zero, (50.0 - gt_point_dis) / 50.0)
+        return gt_point_dis

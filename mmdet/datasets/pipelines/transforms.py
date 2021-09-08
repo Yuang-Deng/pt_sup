@@ -242,6 +242,12 @@ class Resize:
                 bboxes[:, 0::2] = np.clip(bboxes[:, 0::2], 0, img_shape[1])
                 bboxes[:, 1::2] = np.clip(bboxes[:, 1::2], 0, img_shape[0])
             results[key] = bboxes
+    
+    def _resize_points(self, results):
+        """Resize bounding boxes with ``results['scale_factor']``."""
+        if 'gt_points' in results.keys():
+            points = results['gt_points'] * results['scale_factor'][:2]
+            results['gt_points'] = points
 
     def _resize_masks(self, results):
         """Resize masks with ``results['scale']``"""
@@ -303,6 +309,7 @@ class Resize:
 
         self._resize_img(results)
         self._resize_bboxes(results)
+        self._resize_points(results)
         self._resize_masks(results)
         self._resize_seg(results)
         return results
@@ -415,6 +422,36 @@ class RandomFlip:
             raise ValueError(f"Invalid flipping direction '{direction}'")
         return flipped
 
+    def point_flip(self, points, img_shape, direction):
+        """Flip bboxes horizontally.
+
+        Args:
+            bboxes (numpy.ndarray): Bounding boxes, shape (..., 4*k)
+            img_shape (tuple[int]): Image shape (height, width)
+            direction (str): Flip direction. Options are 'horizontal',
+                'vertical'.
+
+        Returns:
+            numpy.ndarray: Flipped bounding boxes.
+        """
+
+        assert points.shape[-1] % 2 == 0
+        flipped = points.copy()
+        if direction == 'horizontal':
+            w = img_shape[1]
+            flipped[..., 0::2] = w - points[..., 0::2]
+        elif direction == 'vertical':
+            h = img_shape[0]
+            flipped[..., 1::2] = h - points[..., 1::2]
+        elif direction == 'diagonal':
+            w = img_shape[1]
+            h = img_shape[0]
+            flipped[..., 0::2] = w - points[..., 0::2]
+            flipped[..., 1::2] = h - points[..., 1::2]
+        else:
+            raise ValueError(f"Invalid flipping direction '{direction}'")
+        return flipped
+
     def __call__(self, results):
         """Call function to flip bounding boxes, masks, semantic segmentation
         maps.
@@ -456,6 +493,8 @@ class RandomFlip:
                 results[key] = mmcv.imflip(
                     results[key], direction=results['flip_direction'])
             # flip bboxes
+            if 'gt_points' in results.keys():
+                results['gt_points'] = self.point_flip(results['gt_points'], results['img_shape'], results['flip_direction'])
             for key in results.get('bbox_fields', []):
                 results[key] = self.bbox_flip(results[key],
                                               results['img_shape'],

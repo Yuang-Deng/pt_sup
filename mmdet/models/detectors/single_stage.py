@@ -58,6 +58,7 @@ class SingleStageDetector(BaseDetector):
                       img_metas,
                       gt_bboxes,
                       gt_labels,
+                      gt_points=None,
                       gt_bboxes_ignore=None):
         """
         Args:
@@ -85,15 +86,16 @@ class SingleStageDetector(BaseDetector):
         label_img_metas, unlabel_img_metas = img_metas[:len(img_metas) // 2], img_metas[len(img_metas) // 2:]
         label_gt_bboxes, unlabel_gt_bboxes = gt_bboxes[:len(gt_bboxes) // 2], gt_bboxes[len(gt_bboxes) // 2:]
         label_gt_labels, unlabel_gt_labels = gt_labels[:len(gt_labels) // 2], gt_labels[len(gt_labels) // 2:]
+        label_gt_points, unlabel_gt_points = gt_points[:len(gt_points) // 2], gt_points[len(gt_points) // 2:]
         label_type2weight = self.train_cfg.label_type2weight
 
         x = self.extract_feat(label_img)
         label_losses = self.bbox_head.forward_train(x, label_img_metas, label_gt_bboxes,
-                                              label_gt_labels, gt_bboxes_ignore)
+                                              label_gt_labels, label_gt_points, gt_bboxes_ignore)
 
         x = self.extract_feat(unlabel_img)
         unlabel_losses = self.bbox_head.forward_train(x, unlabel_img_metas, unlabel_gt_bboxes,
-                                              unlabel_gt_labels, gt_bboxes_ignore)
+                                              unlabel_gt_labels, unlabel_gt_points, gt_bboxes_ignore)
 
         for k in label_losses.keys():
             label_losses[k] += unlabel_losses[k] * label_type2weight[1]

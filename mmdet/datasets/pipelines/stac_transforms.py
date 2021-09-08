@@ -151,7 +151,7 @@ class STACTransform:
         #                     #    [self.bbox_affine_transform, self.affine_transform],
         #                        [self.cutout_augment]]
         self.augment_fn = [[self.color_augment],
-                               [self.bbox_affine_transform, self.affine_transform],
+                            #    [self.bbox_affine_transform, self.affine_transform],
                                [self.cutout_augment]]
         # self.default_augment_fn = []
 

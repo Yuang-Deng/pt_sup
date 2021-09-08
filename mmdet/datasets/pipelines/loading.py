@@ -222,6 +222,7 @@ class LoadAnnotations:
                  with_label=True,
                  with_mask=False,
                  with_seg=False,
+                 with_point=False,
                  poly2mask=True,
                  file_client_args=dict(backend='disk')):
         self.with_bbox = with_bbox
@@ -231,6 +232,12 @@ class LoadAnnotations:
         self.poly2mask = poly2mask
         self.file_client_args = file_client_args.copy()
         self.file_client = None
+        self.with_point = with_point
+
+    def _load_points(self, results):
+        ann_info = results['ann_info']
+        results['gt_points'] = ann_info['points'].copy()
+        return results
 
     def _load_bboxes(self, results):
         """Private function to load bounding box annotations.
@@ -365,7 +372,8 @@ class LoadAnnotations:
             dict: The dict contains loaded bounding box, label, mask and
                 semantic segmentation annotations.
         """
-
+        if self.with_point:
+            results = self._load_points(results)
         if self.with_bbox:
             results = self._load_bboxes(results)
             if results is None:

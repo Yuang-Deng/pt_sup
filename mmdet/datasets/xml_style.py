@@ -97,6 +97,15 @@ class XMLDataset(CustomDataset):
         labels = []
         bboxes_ignore = []
         labels_ignore = []
+        points = []
+        for point in root.findall('point'):
+            point_x = int(float(point.find('point_x').text))
+            point_y = int(float(point.find('point_y').text))
+            p = [point_x, point_y]
+            points.append(p)
+        flag = True
+        if len(points) != 0:
+            flag = False
         for obj in root.findall('object'):
             name = obj.find('name').text
             if name not in self.CLASSES:
@@ -126,6 +135,8 @@ class XMLDataset(CustomDataset):
             else:
                 bboxes.append(bbox)
                 labels.append(label)
+                if flag:
+                    points.append([(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2])
         if not bboxes:
             bboxes = np.zeros((0, 4))
             labels = np.zeros((0, ))
@@ -138,9 +149,11 @@ class XMLDataset(CustomDataset):
         else:
             bboxes_ignore = np.array(bboxes_ignore, ndmin=2) - 1
             labels_ignore = np.array(labels_ignore)
+        points = np.array(points)
         ann = dict(
             bboxes=bboxes.astype(np.float32),
             labels=labels.astype(np.int64),
+            points=points.astype(np.float32),
             bboxes_ignore=bboxes_ignore.astype(np.float32),
             labels_ignore=labels_ignore.astype(np.int64))
         return ann
