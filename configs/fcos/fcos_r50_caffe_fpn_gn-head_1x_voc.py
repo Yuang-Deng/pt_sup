@@ -42,7 +42,7 @@ model = dict(
         # loss_centerness=dict(
         #     type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)),
         loss_centerness=dict(
-            type='L1Loss', loss_weight=1.0)),
+            type='SmoothL1Loss', loss_weight=1.0)),
     # training and testing settings
     train_cfg=dict(
         label_type2weight=[1, 1, 1],
@@ -103,18 +103,18 @@ test_pipeline = [
             dict(type='Normalize', **img_norm_cfg),
             dict(type='Pad', size_divisor=32),
             dict(type='ImageToTensor', keys=['img']),
-            dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels']),
+            dict(type='Collect', keys=['img', 'gt_labels']),
         ])
 ]
 data = dict(
     samples_per_gpu=6,
-    workers_per_gpu=8,
+    workers_per_gpu=0,
     train=dict(pipeline=train_pipeline),
     val=dict(pipeline=val_pipeline),
     test=dict(pipeline=test_pipeline))
 # optimizer
 optimizer = dict(
-    lr=0.01, paramwise_cfg=dict(bias_lr_mult=2., bias_decay_mult=0.))
+    lr=0.001, paramwise_cfg=dict(bias_lr_mult=2., bias_decay_mult=0.))
 optimizer_config = dict(
     _delete_=True, grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy

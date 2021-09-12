@@ -251,6 +251,7 @@ class LoadAnnotations:
 
         ann_info = results['ann_info']
         results['gt_bboxes'] = ann_info['bboxes'].copy()
+        results['ori_bboxes'] = ann_info['bboxes'].copy()
 
         gt_bboxes_ignore = ann_info.get('bboxes_ignore', None)
         if gt_bboxes_ignore is not None:

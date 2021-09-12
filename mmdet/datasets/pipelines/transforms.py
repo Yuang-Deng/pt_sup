@@ -246,7 +246,11 @@ class Resize:
     def _resize_points(self, results):
         """Resize bounding boxes with ``results['scale_factor']``."""
         if 'gt_points' in results.keys():
-            points = results['gt_points'] * results['scale_factor'][:2]
+            points = results['gt_points'] * results['scale_factor']
+            if self.bbox_clip_border:
+                img_shape = results['img_shape']
+                points[:, 0::2] = np.clip(points[:, 0::2], 0, img_shape[1])
+                points[:, 1::2] = np.clip(points[:, 1::2], 0, img_shape[0])
             results['gt_points'] = points
 
     def _resize_masks(self, results):
@@ -435,19 +439,23 @@ class RandomFlip:
             numpy.ndarray: Flipped bounding boxes.
         """
 
-        assert points.shape[-1] % 2 == 0
+        assert points.shape[-1] % 4 == 0
         flipped = points.copy()
         if direction == 'horizontal':
             w = img_shape[1]
-            flipped[..., 0::2] = w - points[..., 0::2]
+            flipped[..., 0::4] = w - points[..., 2::4]
+            flipped[..., 2::4] = w - points[..., 0::4]
         elif direction == 'vertical':
             h = img_shape[0]
-            flipped[..., 1::2] = h - points[..., 1::2]
+            flipped[..., 1::4] = h - points[..., 3::4]
+            flipped[..., 3::4] = h - points[..., 1::4]
         elif direction == 'diagonal':
             w = img_shape[1]
             h = img_shape[0]
-            flipped[..., 0::2] = w - points[..., 0::2]
-            flipped[..., 1::2] = h - points[..., 1::2]
+            flipped[..., 0::4] = w - points[..., 2::4]
+            flipped[..., 1::4] = h - points[..., 3::4]
+            flipped[..., 2::4] = w - points[..., 0::4]
+            flipped[..., 3::4] = h - points[..., 1::4]
         else:
             raise ValueError(f"Invalid flipping direction '{direction}'")
         return flipped

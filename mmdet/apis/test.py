@@ -34,7 +34,6 @@ def single_gpu_test(model,
         flag = False
         if 'gt_labels' in data.keys():
             tags = data['gt_labels']
-            data.pop('gt_labels')
             box = data.pop('gt_bboxes')
             flag = True
         with torch.no_grad():

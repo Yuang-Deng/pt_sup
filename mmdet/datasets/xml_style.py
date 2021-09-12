@@ -101,7 +101,7 @@ class XMLDataset(CustomDataset):
         for point in root.findall('point'):
             point_x = int(float(point.find('point_x').text))
             point_y = int(float(point.find('point_y').text))
-            p = [point_x, point_y]
+            p = [point_x, point_y, point_x + 1, point_y + 1]
             points.append(p)
         flag = True
         if len(points) != 0:
@@ -136,7 +136,7 @@ class XMLDataset(CustomDataset):
                 bboxes.append(bbox)
                 labels.append(label)
                 if flag:
-                    points.append([(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2])
+                    points.append([(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2 + 1, (bbox[1] + bbox[3]) / 2 + 1])
         if not bboxes:
             bboxes = np.zeros((0, 4))
             labels = np.zeros((0, ))

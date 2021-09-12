@@ -225,8 +225,8 @@ class MYFCOSHead(AnchorFreeHead):
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
         bg_class_ind = self.num_classes
-        pos_inds = ((flatten_point_dis > 0) & (flatten_labels >= 0)
-                    & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
+        pos_inds = ((flatten_point_dis > 0) & ((flatten_labels >= 0)
+                    & (flatten_labels < bg_class_ind))).nonzero().reshape(-1)
         # pos_inds = ((flatten_labels >= 0)
         #             & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
         # pos_centerness_inds = ((flatten_point_dis > 0)).nonzero().reshape(-1)
@@ -257,6 +257,9 @@ class MYFCOSHead(AnchorFreeHead):
                 pos_decoded_target_preds,
                 weight=pos_centerness_targets,
                 avg_factor=centerness_denorm)
+            pos_inds = (flatten_point_dis > 0).nonzero().reshape(-1)
+            pos_centerness = flatten_centerness[pos_inds]
+            pos_centerness_targets = flatten_point_dis[pos_inds]
             loss_centerness = self.loss_centerness(
                 pos_centerness, pos_centerness_targets, avg_factor=num_pos)
         else:
@@ -593,7 +596,7 @@ class MYFCOSHead(AnchorFreeHead):
         xs = xs[:, None].expand(num_points, num_pts)
         ys = ys[:, None].expand(num_points, num_pts)
 
-        point_dis = torch.sqrt(torch.pow(xs - gt_points[..., 0], 2) + torch.pow(ys - gt_points[..., 0], 2))
+        point_dis = torch.sqrt(torch.pow(xs - gt_points[..., 0], 2) + torch.pow(ys - gt_points[..., 1], 2))
         min = point_dis.min(-1)[0]
         min = min.min()
         xs, ys = points[:, 0], points[:, 1]
@@ -659,13 +662,32 @@ class MYFCOSHead(AnchorFreeHead):
         labels = gt_labels[min_area_inds]
         labels[min_area == INF] = self.num_classes  # set as BG
         bbox_targets = bbox_targets[range(num_points), min_area_inds]
-        # TODO 重合情况选最小
-        point_dis_target = point_dis.min(-1)[0]
+        # TODO 重合情况选加和 一会试试重合置0
+        # if point_dis.sum(-1) == 
+        # point_dis_target = point_dis.min(-1)[0]
         # TODO 不同level用不同的阈值
-        zero = torch.zeros_like(point_dis_target)
-        centerness_range = regress_ranges[..., 0, 1] / 4
-        point_dis_target = torch.where(point_dis_target <= centerness_range, 
-                                        (centerness_range - point_dis_target) / centerness_range, zero)
+        # zero = torch.zeros_like(point_dis_target)
+        centerness_range = regress_ranges[..., 0, 1] / 2
+        centerness_range = centerness_range[:, None].expand(point_dis.shape[0], point_dis.shape[1])
+        bandary = torch.ones_like(centerness_range) * 500
+        centerness_range = torch.where(centerness_range > bandary, bandary, centerness_range)
+        zero = torch.zeros_like(centerness_range)
+        # point_dis_target = torch.where(point_dis_target <= centerness_range, 
+        #                                 (centerness_range - point_dis_target) / (centerness_range + point_dis_target), zero)
+        point_dis_target = torch.where(point_dis <= centerness_range, 
+                                        (centerness_range - point_dis) / (centerness_range + point_dis), zero)
+        
+        point_max = point_dis_target.max(-1)[0]
+        point_mean = point_dis_target.mean(-1)
+        point_sum = point_dis_target.sum(-1)
+        zero = torch.zeros_like(point_sum)
+        point_dis_target = torch.where(point_sum != point_max, point_mean, point_max)
+        # point_dis_target = point_dis_target.max(-1)[0]
+        
+        # point_dis_target = torch.where(point_dis_target <= centerness_range, 
+        #                                 (centerness_range - point_dis_target) / centerness_range, zero)
+        # point_dis_target = torch.where(point_dis_target <= centerness_range, 
+        #                                 centerness_range / (centerness_range + point_dis_target), zero)
 
 
         # zero = torch.ones_like(gt_point_dis) * INF
