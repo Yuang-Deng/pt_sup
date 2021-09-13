@@ -33,9 +33,9 @@ def single_gpu_test(model,
     for i, data in enumerate(data_loader):
         flag = False
         if 'gt_labels' in data.keys():
-            tags = data['gt_labels']
-            data.pop('gt_labels')
-            box = data.pop('gt_bboxes')
+            tags = data.pop('gt_labels')
+            data.pop('gt_bboxes')
+            box = data.pop('gt_points')
             flag = True
         with torch.no_grad():
             result = model(return_loss=False, rescale=True, **data)
