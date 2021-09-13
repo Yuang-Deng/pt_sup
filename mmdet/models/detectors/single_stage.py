@@ -78,32 +78,32 @@ class SingleStageDetector(BaseDetector):
             dict[str, Tensor]: A dictionary of loss components.
         """
         super(SingleStageDetector, self).forward_train(img, img_metas)
-        label_img, unlabel_img = img[:len(img) // 2], img[len(img) // 2:]
-        if '_' not in img_metas[3]['ori_filename'] or '_' not in img_metas[4]['ori_filename'] or '_' not in img_metas[5]['ori_filename']:
-            print(img_metas[3]['ori_filename'])
-            print('warnnings')
-        label_img_metas, unlabel_img_metas = img_metas[:len(img_metas) // 2], img_metas[len(img_metas) // 2:]
-        label_gt_bboxes, unlabel_gt_bboxes = gt_bboxes[:len(gt_bboxes) // 2], gt_bboxes[len(gt_bboxes) // 2:]
-        label_gt_labels, unlabel_gt_labels = gt_labels[:len(gt_labels) // 2], gt_labels[len(gt_labels) // 2:]
-        label_type2weight = self.train_cfg.label_type2weight
+        # label_img, unlabel_img = img[:len(img) // 2], img[len(img) // 2:]
+        # if '_' not in img_metas[3]['ori_filename'] or '_' not in img_metas[4]['ori_filename'] or '_' not in img_metas[5]['ori_filename']:
+        #     print(img_metas[3]['ori_filename'])
+        #     print('warnnings')
+        # label_img_metas, unlabel_img_metas = img_metas[:len(img_metas) // 2], img_metas[len(img_metas) // 2:]
+        # label_gt_bboxes, unlabel_gt_bboxes = gt_bboxes[:len(gt_bboxes) // 2], gt_bboxes[len(gt_bboxes) // 2:]
+        # label_gt_labels, unlabel_gt_labels = gt_labels[:len(gt_labels) // 2], gt_labels[len(gt_labels) // 2:]
+        # label_type2weight = self.train_cfg.label_type2weight
 
-        x = self.extract_feat(label_img)
-        label_losses = self.bbox_head.forward_train(x, label_img_metas, label_gt_bboxes,
-                                              label_gt_labels, gt_bboxes_ignore)
+        # x = self.extract_feat(label_img)
+        # label_losses = self.bbox_head.forward_train(x, label_img_metas, label_gt_bboxes,
+        #                                       label_gt_labels, gt_bboxes_ignore)
 
-        x = self.extract_feat(unlabel_img)
-        unlabel_losses = self.bbox_head.forward_train(x, unlabel_img_metas, unlabel_gt_bboxes,
-                                              unlabel_gt_labels, gt_bboxes_ignore)
+        # x = self.extract_feat(unlabel_img)
+        # unlabel_losses = self.bbox_head.forward_train(x, unlabel_img_metas, unlabel_gt_bboxes,
+        #                                       unlabel_gt_labels, gt_bboxes_ignore)
 
-        for k in label_losses.keys():
-            label_losses[k] += unlabel_losses[k] * label_type2weight[1]
-        return label_losses
-
-        # x = self.extract_feat(img)
-        # losses = self.bbox_head.forward_train(x, img_metas, gt_bboxes,
-        #                                       gt_labels, gt_bboxes_ignore)
-        # return losses
+        # for k in label_losses.keys():
+        #     label_losses[k] += unlabel_losses[k] * label_type2weight[1]
         # return label_losses
+
+        x = self.extract_feat(img)
+        losses = self.bbox_head.forward_train(x, img_metas, gt_bboxes,
+                                              gt_labels, gt_bboxes_ignore)
+        return losses
+        return label_losses
 
     def simple_test(self, img, img_metas, rescale=False):
         """Test function without test-time augmentation.
