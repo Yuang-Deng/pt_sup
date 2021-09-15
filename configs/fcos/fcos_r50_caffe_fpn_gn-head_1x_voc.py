@@ -26,7 +26,7 @@ model = dict(
         num_outs=5,
         relu_before_extra_convs=True),
     bbox_head=dict(
-        type='MYFCOSHead',
+        type='REWFCOSHead',
         num_classes=20,
         in_channels=256,
         stacked_convs=4,
@@ -40,9 +40,9 @@ model = dict(
             alpha=0.25,
             loss_weight=1.0),
         loss_bbox=dict(type='IoULoss', loss_weight=1.0),
-        # loss_centerness=dict(
-        #     type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)),
         loss_centerness=dict(
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        loss_reweight=dict(
             type='SmoothL1Loss', loss_weight=1.0)),
     # training and testing settings
     train_cfg=dict(

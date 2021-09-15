@@ -34,6 +34,7 @@ from .yolo_head import YOLOV3Head
 from .yolof_head import YOLOFHead
 from .yolox_head import YOLOXHead
 from .my_fcos_head import MYFCOSHead
+from .rewight_center_fcos_head import REWFCOSHead
 
 __all__ = [
     'AnchorFreeHead', 'AnchorHead', 'GuidedAnchorHead', 'FeatureAdaption',
@@ -45,5 +46,5 @@ __all__ = [
     'SABLRetinaHead', 'CentripetalHead', 'VFNetHead', 'StageCascadeRPNHead',
     'CascadeRPNHead', 'EmbeddingRPNHead', 'LDHead', 'CascadeRPNHead',
     'AutoAssignHead', 'DETRHead', 'YOLOFHead', 'DeformableDETRHead',
-    'CenterNetHead', 'YOLOXHead', 'MYFCOSHead'
+    'CenterNetHead', 'YOLOXHead', 'MYFCOSHead', 'REWFCOSHead'
 ]

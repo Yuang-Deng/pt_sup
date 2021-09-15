@@ -12,7 +12,7 @@ INF = 1e8
 
 
 @HEADS.register_module()
-class MYFCOSHead(AnchorFreeHead):
+class REWFCOSHead(AnchorFreeHead):
     """Anchor-free head used in `FCOS <https://arxiv.org/abs/1904.01355>`_.
 
     The FCOS head does not use anchor boxes. Instead bounding boxes are
@@ -64,7 +64,7 @@ class MYFCOSHead(AnchorFreeHead):
                  center_sample_radius=1.5,
                  norm_on_bbox=False,
                  centerness_on_reg=False,
-                 centerness_dis=50,
+                 reweight_on_reg=True,
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -75,6 +75,9 @@ class MYFCOSHead(AnchorFreeHead):
                  loss_centerness=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
+                     loss_weight=1.0),
+                 loss_reweight=dict(
+                     type='SmoothL1Loss',
                      loss_weight=1.0),
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
                  init_cfg=dict(
@@ -92,6 +95,7 @@ class MYFCOSHead(AnchorFreeHead):
         self.center_sample_radius = center_sample_radius
         self.norm_on_bbox = norm_on_bbox
         self.centerness_on_reg = centerness_on_reg
+        self.reweight_on_reg = reweight_on_reg
         super().__init__(
             num_classes,
             in_channels,
@@ -101,11 +105,13 @@ class MYFCOSHead(AnchorFreeHead):
             init_cfg=init_cfg,
             **kwargs)
         self.loss_centerness = build_loss(loss_centerness)
+        self.loss_reweight = build_loss(loss_reweight)
 
     def _init_layers(self):
         """Initialize layers of the head."""
         super()._init_layers()
         self.conv_centerness = nn.Conv2d(self.feat_channels, 1, 3, padding=1)
+        self.conv_reweight = nn.Conv2d(self.feat_channels, 1, 3, padding=1)
         self.scales = nn.ModuleList([Scale(1.0) for _ in self.strides])
 
     def forward(self, feats):
@@ -145,6 +151,10 @@ class MYFCOSHead(AnchorFreeHead):
                 predictions of input feature maps.
         """
         cls_score, bbox_pred, cls_feat, reg_feat = super().forward_single(x)
+        if self.reweight_on_reg:
+            reweight = self.conv_reweight(reg_feat)
+        else:
+            reweight = self.conv_reweight(cls_feat)
         if self.centerness_on_reg:
             centerness = self.conv_centerness(reg_feat)
         else:
@@ -158,13 +168,14 @@ class MYFCOSHead(AnchorFreeHead):
                 bbox_pred *= stride
         else:
             bbox_pred = bbox_pred.exp()
-        return cls_score, bbox_pred, centerness
+        return cls_score, bbox_pred, centerness, reweight
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
+    @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses', 'reweights'))
     def loss(self,
              cls_scores,
              bbox_preds,
              centernesses,
+             reweights,
              gt_bboxes,
              gt_labels,
              img_metas,
@@ -192,7 +203,7 @@ class MYFCOSHead(AnchorFreeHead):
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
         """
-        assert len(cls_scores) == len(bbox_preds) == len(centernesses)
+        assert len(cls_scores) == len(bbox_preds) == len(centernesses) == len(reweights)
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
@@ -213,23 +224,25 @@ class MYFCOSHead(AnchorFreeHead):
             centerness.permute(0, 2, 3, 1).reshape(-1)
             for centerness in centernesses
         ]
+        flatten_reweight = [
+            reweight.permute(0, 2, 3, 1).reshape(-1)
+            for reweight in reweights
+        ]
         flatten_cls_scores = torch.cat(flatten_cls_scores)
         flatten_bbox_preds = torch.cat(flatten_bbox_preds)
         flatten_centerness = torch.cat(flatten_centerness)
+        flatten_reweight = torch.cat(flatten_reweight)
+        flatten_reweight_target = torch.cat(point_dis)
         flatten_labels = torch.cat(labels)
         flatten_bbox_targets = torch.cat(bbox_targets)
-        flatten_point_dis = torch.cat(point_dis)
         # repeat points to align with bbox_preds
         flatten_points = torch.cat(
             [points.repeat(num_imgs, 1) for points in all_level_points])
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
         bg_class_ind = self.num_classes
-        pos_inds = ((flatten_point_dis > 0) & ((flatten_labels >= 0)
-                    & (flatten_labels < bg_class_ind))).nonzero().reshape(-1)
-        # pos_inds = ((flatten_labels >= 0)
-        #             & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
-        # pos_centerness_inds = ((flatten_point_dis > 0)).nonzero().reshape(-1)
+        pos_inds = ((flatten_reweight_target > 0) & (flatten_labels >= 0)
+                    & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
         num_pos = torch.tensor(
             len(pos_inds), dtype=torch.float, device=bbox_preds[0].device)
         num_pos = max(reduce_mean(num_pos), 1.0)
@@ -238,14 +251,13 @@ class MYFCOSHead(AnchorFreeHead):
 
         pos_bbox_preds = flatten_bbox_preds[pos_inds]
         pos_centerness = flatten_centerness[pos_inds]
+        pos_reweight = flatten_reweight[pos_inds]
         pos_bbox_targets = flatten_bbox_targets[pos_inds]
-        # pos_centerness_targets = self.centerness_target(flatten_bbox_targets)
-        # centerness_targets = self.my_centerness_target(flatten_point_dis)
-        pos_centerness_targets = flatten_point_dis[pos_inds]
+        pos_centerness_targets = self.centerness_target(pos_bbox_targets)
+        final_reweight = pos_centerness_targets * flatten_reweight_target[pos_inds]
         # centerness weighted iou loss
-        # TODO 目前不知道有啥用
-        centerness_denorm = max(
-            reduce_mean(pos_centerness_targets.sum().detach()), 1e-6)
+        final_reweight_denorm = max(
+            reduce_mean(final_reweight.sum().detach()), 1e-6)
 
         if len(pos_inds) > 0:
             pos_points = flatten_points[pos_inds]
@@ -255,35 +267,32 @@ class MYFCOSHead(AnchorFreeHead):
             loss_bbox = self.loss_bbox(
                 pos_decoded_bbox_preds,
                 pos_decoded_target_preds,
-                weight=pos_centerness_targets,
-                avg_factor=centerness_denorm)
-            pos_inds = (flatten_point_dis > 0).nonzero().reshape(-1)
-            pos_centerness = flatten_centerness[pos_inds]
-            pos_centerness_targets = flatten_point_dis[pos_inds]
+                weight=final_reweight,
+                avg_factor=final_reweight_denorm)
             loss_centerness = self.loss_centerness(
                 pos_centerness, pos_centerness_targets, avg_factor=num_pos)
+            pos_inds = (flatten_reweight_target > 0).nonzero().reshape(-1)
+            pos_centerness = flatten_reweight[pos_inds]
+            pos_centerness_targets = flatten_reweight_target[pos_inds]
+            loss_reweight = self.loss_reweight(
+                flatten_reweight, flatten_reweight_target, avg_factor=num_pos)
         else:
             loss_bbox = pos_bbox_preds.sum()
             loss_centerness = pos_centerness.sum()
-        # pos_centerness_inds = ((flatten_point_dis > 0)).nonzero().reshape(-1)
-        # fc = flatten_centerness[pos_centerness_inds]
-        # ct = flatten_point_dis[pos_centerness_inds]
-        # num_pos = torch.tensor(
-        #     len(pos_centerness_inds), dtype=torch.float, device=bbox_preds[0].device)
-        # num_pos = max(reduce_mean(num_pos), 1.0)
-        # loss_centerness = self.loss_centerness(
-        #         pos_centerness, flatten_point_dis[pos_inds], avg_factor=num_pos)
+            loss_reweight = pos_reweight.sum()
 
         return dict(
             loss_cls=loss_cls,
             loss_bbox=loss_bbox,
-            loss_centerness=loss_centerness)
+            loss_centerness=loss_centerness,
+            loss_reweight=loss_reweight)
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
+    @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses', 'reweights'))
     def get_bboxes(self,
                    cls_scores,
                    bbox_preds,
                    centernesses,
+                   reweights,
                    img_metas,
                    cfg=None,
                    rescale=False,
@@ -325,6 +334,9 @@ class MYFCOSHead(AnchorFreeHead):
         bbox_pred_list = [bbox_preds[i].detach() for i in range(num_levels)]
         centerness_pred_list = [
             centernesses[i].detach() for i in range(num_levels)
+        ]
+        reweights_pred_list = [
+            reweights[i].detach() for i in range(num_levels)
         ]
         if torch.onnx.is_in_onnx_export():
             assert len(
@@ -393,9 +405,11 @@ class MYFCOSHead(AnchorFreeHead):
         # convert to tensor to keep tracing
         nms_pre_tensor = torch.tensor(
             cfg.get('nms_pre', -1), device=device, dtype=torch.long)
+        # centernesses = centernesses * reweights
         mlvl_bboxes = []
         mlvl_scores = []
         mlvl_centerness = []
+        # mlvl_reweight = []
         for cls_score, bbox_pred, centerness, points in zip(
                 cls_scores, bbox_preds, centernesses, mlvl_points):
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
@@ -404,6 +418,9 @@ class MYFCOSHead(AnchorFreeHead):
             centerness = centerness.permute(0, 2, 3,
                                             1).reshape(batch_size,
                                                        -1).sigmoid()
+            # reweight = reweight.permute(0, 2, 3,
+            #                                 1).reshape(batch_size,
+            #                                            -1).sigmoid()
 
             bbox_pred = bbox_pred.permute(0, 2, 3,
                                           1).reshape(batch_size, -1, 4)
@@ -412,6 +429,7 @@ class MYFCOSHead(AnchorFreeHead):
             from mmdet.core.export import get_k_for_topk
             nms_pre = get_k_for_topk(nms_pre_tensor, bbox_pred.shape[1])
             if nms_pre > 0:
+                # max_scores, _ = (scores * centerness[..., None] * reweight).max(-1)
                 max_scores, _ = (scores * centerness[..., None]).max(-1)
                 _, topk_inds = max_scores.topk(nms_pre)
                 batch_inds = torch.arange(batch_size).view(
@@ -430,16 +448,20 @@ class MYFCOSHead(AnchorFreeHead):
                             batch_size, -1, self.num_classes)
                     centerness = centerness.reshape(
                         -1, 1)[transformed_inds].reshape(batch_size, -1)
+                    # reweight = reweight.reshape(
+                    #     -1, 1)[transformed_inds].reshape(batch_size, -1)
                 else:
                     points = points[batch_inds, topk_inds, :]
                     bbox_pred = bbox_pred[batch_inds, topk_inds, :]
                     scores = scores[batch_inds, topk_inds, :]
                     centerness = centerness[batch_inds, topk_inds]
+                    # reweight = reweight[batch_inds, topk_inds]
 
             bboxes = distance2bbox(points, bbox_pred, max_shape=img_shapes)
             mlvl_bboxes.append(bboxes)
             mlvl_scores.append(scores)
             mlvl_centerness.append(centerness)
+            # mlvl_reweight.append(reweight)
 
         batch_mlvl_bboxes = torch.cat(mlvl_bboxes, dim=1)
         if rescale:
@@ -447,6 +469,7 @@ class MYFCOSHead(AnchorFreeHead):
                 scale_factors).unsqueeze(1)
         batch_mlvl_scores = torch.cat(mlvl_scores, dim=1)
         batch_mlvl_centerness = torch.cat(mlvl_centerness, dim=1)
+        # batch_mlvl_reweight = torch.cat(mlvl_reweight, dim=1)
 
         # Replace multiclass_nms with ONNX::NonMaxSuppression in deployment
         if torch.onnx.is_in_onnx_export() and with_nms:
@@ -533,11 +556,6 @@ class MYFCOSHead(AnchorFreeHead):
         # the number of points per img, per lvl
         num_points = [center.size(0) for center in points]
 
-        # TODO points 测试  用完要删除
-        # gt_points_list = []
-        # for i in range(len(gt_bboxes_list)):
-        #     gt_points_list.append(torch.tensor([[30,30],[200,200]], device=gt_bboxes_list[0].device))
-
         # get labels and bbox_targets of each image
         labels_list, bbox_targets_list, point_dis = multi_apply(
             self._get_target_single,
@@ -590,16 +608,17 @@ class MYFCOSHead(AnchorFreeHead):
         areas = areas[None].repeat(num_points, 1)
         regress_ranges = regress_ranges[:, None, :].expand(
             num_points, num_gts, 2)
-        gt_bboxes = gt_bboxes[None].expand(num_points, num_gts, 4)
         gt_points = gt_points[None].expand(num_points, num_pts, 2)
         xs, ys = points[:, 0], points[:, 1]
         xs = xs[:, None].expand(num_points, num_pts)
         ys = ys[:, None].expand(num_points, num_pts)
-
         point_dis = torch.sqrt(torch.pow(xs - gt_points[..., 0], 2) + torch.pow(ys - gt_points[..., 1], 2))
+
+        gt_bboxes = gt_bboxes[None].expand(num_points, num_gts, 4)
         xs, ys = points[:, 0], points[:, 1]
         xs = xs[:, None].expand(num_points, num_gts)
         ys = ys[:, None].expand(num_points, num_gts)
+
         left = xs - gt_bboxes[..., 0]
         right = gt_bboxes[..., 2] - xs
         top = ys - gt_bboxes[..., 1]
@@ -660,45 +679,21 @@ class MYFCOSHead(AnchorFreeHead):
         labels = gt_labels[min_area_inds]
         labels[min_area == INF] = self.num_classes  # set as BG
         bbox_targets = bbox_targets[range(num_points), min_area_inds]
-        # TODO 重合情况选加和 一会试试重合置0
-        # if point_dis.sum(-1) == 
-        # point_dis_target = point_dis.min(-1)[0]
-        # TODO 不同level用不同的阈值
-        # zero = torch.zeros_like(point_dis_target)
-        centerness_range = regress_ranges[..., 0, 1] / 2
-        centerness_range = centerness_range[:, None].expand(point_dis.shape[0], point_dis.shape[1])
-        bandary = torch.ones_like(centerness_range) * 500
-        centerness_range = torch.where(centerness_range > bandary, bandary, centerness_range)
-        zero = torch.zeros_like(centerness_range)
-        ones = torch.ones_like(centerness_range) * 2
-        # point_dis_target = torch.where(point_dis_target <= centerness_range, 
-        #                                 (centerness_range - point_dis_target) / (centerness_range + point_dis_target), zero)
-        # point_dis_target = torch.where(point_dis <= centerness_range, 
-        #                                 (centerness_range - point_dis) / (centerness_range + point_dis), zero)
-        point_dis_target = torch.where(point_dis <= centerness_range, 
-                                        (centerness_range - point_dis) / ((centerness_range) / 4), zero)
-        # point_dis_target = torch.where((point_dis <= centerness_range) & (point_dis >= (centerness_range / 2)), 
-        #                                 ones, zero)       
-        # point_dis_target = torch.where(point_dis <= centerness_range, 
-        #                                 ones, zero)                       
-        # point_dis_target = torch.where(point_dis <= centerness_range, 
-        #                                 (point_dis) / (centerness_range), zero)
+
+        reweight_range = regress_ranges[..., 0, 1] / 2
+        reweight_range = reweight_range[:, None].expand(point_dis.shape[0], point_dis.shape[1])
+        bandary = torch.ones_like(reweight_range) * 500
+        reweight_range = torch.where(reweight_range > bandary, bandary, reweight_range)
+        zero = torch.zeros_like(reweight_range)
+        ones = torch.ones_like(reweight_range) * 2
+        point_dis_target = torch.where(point_dis <= reweight_range, 
+                                        (reweight_range - point_dis) / ((reweight_range) / 2), zero)
         
         point_max = point_dis_target.max(-1)[0]
         point_mean = point_dis_target.mean(-1)
         point_sum = point_dis_target.sum(-1)
         zero = torch.zeros_like(point_sum)
         point_dis_target = torch.where(point_sum != point_max, point_mean, point_max)
-        # point_dis_target = point_dis_target.max(-1)[0]
-        
-        # point_dis_target = torch.where(point_dis_target <= centerness_range, 
-        #                                 (centerness_range - point_dis_target) / centerness_range, zero)
-        # point_dis_target = torch.where(point_dis_target <= centerness_range, 
-        #                                 centerness_range / (centerness_range + point_dis_target), zero)
-
-
-        # zero = torch.ones_like(gt_point_dis) * INF
-        # gt_point_dis = torch.where(gt_point_dis > 50.0 , zero, gt_point_dis)
 
         return labels, bbox_targets, point_dis_target
 
@@ -722,19 +717,3 @@ class MYFCOSHead(AnchorFreeHead):
                 left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
                     top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
         return torch.sqrt(centerness_targets)
-
-    def my_centerness_target(self, gt_point_dis):
-        """Compute centerness targets.
-
-        Args:
-            pos_bbox_targets (Tensor): BBox targets of positive bboxes in shape
-                (num_pos, 4)
-
-        Returns:
-            Tensor: Centerness target.
-        """
-        # TODO 两个点相交的区域如何处理 置0还是相加 要实验测试一下
-        # only calculate pos centerness targets, otherwise there may be nan
-        zero = torch.zeros_like(gt_point_dis)
-        gt_point_dis = torch.where(gt_point_dis > 50.0 , zero, (50.0 - gt_point_dis) / 50.0)
-        return gt_point_dis
