@@ -272,6 +272,9 @@ class REWFCOSHead(AnchorFreeHead):
             loss_centerness = self.loss_centerness(
                 pos_centerness, pos_centerness_targets, avg_factor=num_pos)
             pos_inds = (flatten_reweight_target > 0).nonzero().reshape(-1)
+            num_pos = torch.tensor(
+                len(pos_inds), dtype=torch.float, device=bbox_preds[0].device)
+            num_pos = max(reduce_mean(num_pos), 1.0)
             pos_centerness = flatten_reweight[pos_inds]
             pos_centerness_targets = flatten_reweight_target[pos_inds]
             loss_reweight = self.loss_reweight(
@@ -333,10 +336,7 @@ class REWFCOSHead(AnchorFreeHead):
         cls_score_list = [cls_scores[i].detach() for i in range(num_levels)]
         bbox_pred_list = [bbox_preds[i].detach() for i in range(num_levels)]
         centerness_pred_list = [
-            centernesses[i].detach() for i in range(num_levels)
-        ]
-        reweights_pred_list = [
-            reweights[i].detach() for i in range(num_levels)
+            centernesses[i].detach() * reweights[i].detach() for i in range(num_levels)
         ]
         if torch.onnx.is_in_onnx_export():
             assert len(
@@ -680,7 +680,7 @@ class REWFCOSHead(AnchorFreeHead):
         labels[min_area == INF] = self.num_classes  # set as BG
         bbox_targets = bbox_targets[range(num_points), min_area_inds]
 
-        reweight_range = regress_ranges[..., 0, 1] / 2
+        reweight_range = regress_ranges[..., 0, 1]
         reweight_range = reweight_range[:, None].expand(point_dis.shape[0], point_dis.shape[1])
         bandary = torch.ones_like(reweight_range) * 500
         reweight_range = torch.where(reweight_range > bandary, bandary, reweight_range)
