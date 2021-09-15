@@ -31,6 +31,7 @@ model = dict(
         in_channels=256,
         stacked_convs=4,
         feat_channels=256,
+        centerness_on_reg=False,
         strides=[8, 16, 32, 64, 128],
         loss_cls=dict(
             type='FocalLoss',
@@ -103,12 +104,12 @@ test_pipeline = [
             dict(type='Normalize', **img_norm_cfg),
             dict(type='Pad', size_divisor=32),
             dict(type='ImageToTensor', keys=['img']),
-            dict(type='Collect', keys=['img', 'gt_labels']),
+            dict(type='Collect', keys=['img']),
         ])
 ]
 data = dict(
     samples_per_gpu=6,
-    workers_per_gpu=0,
+    workers_per_gpu=8,
     train=dict(pipeline=train_pipeline),
     val=dict(pipeline=val_pipeline),
     test=dict(pipeline=test_pipeline))

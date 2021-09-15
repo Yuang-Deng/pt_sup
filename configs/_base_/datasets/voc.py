@@ -76,9 +76,9 @@ data = dict(
         pipeline=val_pipeline),
     test=dict(
         type=dataset_type,
-        ann_file=data_root + 'VOC2012/ImageSets/Main/trainval.txt',
-        img_prefix=data_root + 'VOC2012/',
-        # ann_file=data_root + 'VOC2007/ImageSets/Main/test.txt',
-        # img_prefix=data_root + 'VOC2007/',
+        # ann_file=data_root + 'VOC2012/ImageSets/Main/trainval.txt',
+        # img_prefix=data_root + 'VOC2012/',
+        ann_file=data_root + 'VOC2007/ImageSets/Main/test.txt',
+        img_prefix=data_root + 'VOC2007/',
         pipeline=test_pipeline))
 evaluation = dict(interval=1, metric='mAP')

@@ -86,6 +86,9 @@ class SingleStageDetector(BaseDetector):
         if '_' not in img_metas[3]['ori_filename'] or '_' not in img_metas[4]['ori_filename'] or '_' not in img_metas[5]['ori_filename']:
             print(img_metas[3]['ori_filename'])
             print('warnnings, there is a error, we need a _ in the ori_filename, but there has not')
+
+        for i in range(len(gt_points)):
+            gt_points[i] = gt_points[i][..., :2]
         
         label_img_metas, unlabel_img_metas = img_metas[:len(img_metas) // 2], img_metas[len(img_metas) // 2:]
         label_gt_bboxes, unlabel_gt_bboxes = gt_bboxes[:len(gt_bboxes) // 2], gt_bboxes[len(gt_bboxes) // 2:]
@@ -98,52 +101,53 @@ class SingleStageDetector(BaseDetector):
         # gt_points = torch.cat([gt_points, gt_points], dim=-1)
         # gt_points[..., 2:] = gt_points[..., 2:] + 1
         
-        for index in range(len(gt_points)):
-            gt_points[index] = torch.cat([gt_points[index], torch.ones([gt_points[index].shape[0],1]).to(gt_points[index].device)], dim=-1)
         # 可视化
-        bbox_results = [
-            bbox2result(det_bboxes, torch.zeros(det_bboxes.shape[0]), self.bbox_head.num_classes)
-            for det_bboxes, _ in zip(gt_points, gt_labels)
-        ]
+        # for index in range(len(gt_points)):
+        #     gt_points[index] = torch.cat([gt_points[index], torch.ones([gt_points[index].shape[0],1]).to(gt_points[index].device)], dim=-1)
+        #
+        # bbox_results = [
+        #     bbox2result(det_bboxes, torch.zeros(det_bboxes.shape[0]), self.bbox_head.num_classes)
+        #     for det_bboxes, _ in zip(gt_points, gt_labels)
+        # ]
 
-        imgs = tensor2imgs(img, **img_metas[0]['img_norm_cfg'])
-        out_dir = './work_dirs/fcos_r50_caffe_fpn_gn-head_1x_coco/out_labeled/'
-        for i, (img, img_meta) in enumerate(zip(imgs, img_metas)):
-            h, w, _ = img_meta['img_shape']
-            img_show = img[:h, :w, :]
-            if out_dir:
-                out_file = osp.join(out_dir, img_meta['ori_filename'])
-            else:
-                out_file = None
-            self.show_result(
-                img_show,
-                bbox_results[i],
-                show=True,
-                out_file=out_file,
-                score_thr=0.3)
+        # imgs = tensor2imgs(img, **img_metas[0]['img_norm_cfg'])
+        # out_dir = './work_dirs/fcos_r50_caffe_fpn_gn-head_1x_coco/out_labeled/'
+        # for i, (img, img_meta) in enumerate(zip(imgs, img_metas)):
+        #     h, w, _ = img_meta['img_shape']
+        #     img_show = img[:h, :w, :]
+        #     if out_dir:
+        #         out_file = osp.join(out_dir, img_meta['ori_filename'])
+        #     else:
+        #         out_file = None
+        #     self.show_result(
+        #         img_show,
+        #         bbox_results[i],
+        #         show=True,
+        #         out_file=out_file,
+        #         score_thr=0.3)
 
-        for index in range(len(unlabel_gt_bboxes)):
-            unlabel_gt_bboxes[index] = torch.cat([unlabel_gt_bboxes[index], torch.ones([unlabel_gt_bboxes[index].shape[0],1]).to(unlabel_gt_bboxes[index].device)], dim=-1)
-        bbox_results = [
-            bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
-            for det_bboxes, det_labels in zip(unlabel_gt_bboxes, unlabel_gt_labels)
-        ]
+        # for index in range(len(unlabel_gt_bboxes)):
+        #     unlabel_gt_bboxes[index] = torch.cat([unlabel_gt_bboxes[index], torch.ones([unlabel_gt_bboxes[index].shape[0],1]).to(unlabel_gt_bboxes[index].device)], dim=-1)
+        # bbox_results = [
+        #     bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
+        #     for det_bboxes, det_labels in zip(unlabel_gt_bboxes, unlabel_gt_labels)
+        # ]
 
-        imgs = tensor2imgs(unlabel_img, **unlabel_img_metas[0]['img_norm_cfg'])
-        out_dir = './work_dirs/fcos_r50_caffe_fpn_gn-head_1x_coco/out_unlabeled/'
-        for i, (img, img_meta) in enumerate(zip(imgs, unlabel_img_metas)):
-            h, w, _ = img_meta['img_shape']
-            img_show = img[:h, :w, :]
-            if out_dir:
-                out_file = osp.join(out_dir, img_meta['ori_filename'])
-            else:
-                out_file = None
-            self.show_result(
-                img_show,
-                bbox_results[i],
-                show=True,
-                out_file=out_file,
-                score_thr=0.3)
+        # imgs = tensor2imgs(unlabel_img, **unlabel_img_metas[0]['img_norm_cfg'])
+        # out_dir = './work_dirs/fcos_r50_caffe_fpn_gn-head_1x_coco/out_unlabeled/'
+        # for i, (img, img_meta) in enumerate(zip(imgs, unlabel_img_metas)):
+        #     h, w, _ = img_meta['img_shape']
+        #     img_show = img[:h, :w, :]
+        #     if out_dir:
+        #         out_file = osp.join(out_dir, img_meta['ori_filename'])
+        #     else:
+        #         out_file = None
+        #     self.show_result(
+        #         img_show,
+        #         bbox_results[i],
+        #         show=True,
+        #         out_file=out_file,
+        #         score_thr=0.3)
 
         x = self.extract_feat(label_img)
         label_losses = self.bbox_head.forward_train(x, label_img_metas, label_gt_bboxes,

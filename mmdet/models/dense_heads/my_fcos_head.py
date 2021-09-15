@@ -672,10 +672,19 @@ class MYFCOSHead(AnchorFreeHead):
         bandary = torch.ones_like(centerness_range) * 500
         centerness_range = torch.where(centerness_range > bandary, bandary, centerness_range)
         zero = torch.zeros_like(centerness_range)
+        ones = torch.ones_like(centerness_range) * 2
         # point_dis_target = torch.where(point_dis_target <= centerness_range, 
         #                                 (centerness_range - point_dis_target) / (centerness_range + point_dis_target), zero)
+        # point_dis_target = torch.where(point_dis <= centerness_range, 
+        #                                 (centerness_range - point_dis) / (centerness_range + point_dis), zero)
         point_dis_target = torch.where(point_dis <= centerness_range, 
-                                        (centerness_range - point_dis) / (centerness_range + point_dis), zero)
+                                        (centerness_range - point_dis) / ((centerness_range) / 4), zero)
+        # point_dis_target = torch.where((point_dis <= centerness_range) & (point_dis >= (centerness_range / 2)), 
+        #                                 ones, zero)       
+        # point_dis_target = torch.where(point_dis <= centerness_range, 
+        #                                 ones, zero)                       
+        # point_dis_target = torch.where(point_dis <= centerness_range, 
+        #                                 (point_dis) / (centerness_range), zero)
         
         point_max = point_dis_target.max(-1)[0]
         point_mean = point_dis_target.mean(-1)
