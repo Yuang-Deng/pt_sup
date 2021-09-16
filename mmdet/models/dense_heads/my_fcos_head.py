@@ -225,10 +225,10 @@ class MYFCOSHead(AnchorFreeHead):
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
         bg_class_ind = self.num_classes
-        pos_inds = ((flatten_point_dis > 0) & ((flatten_labels >= 0)
-                    & (flatten_labels < bg_class_ind))).nonzero().reshape(-1)
-        # pos_inds = ((flatten_labels >= 0)
-        #             & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
+        # pos_inds = ((flatten_point_dis > 0) & ((flatten_labels >= 0)
+        #             & (flatten_labels < bg_class_ind))).nonzero().reshape(-1)
+        pos_inds = ((flatten_labels >= 0)
+                    & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
         # pos_centerness_inds = ((flatten_point_dis > 0)).nonzero().reshape(-1)
         num_pos = torch.tensor(
             len(pos_inds), dtype=torch.float, device=bbox_preds[0].device)
@@ -255,13 +255,13 @@ class MYFCOSHead(AnchorFreeHead):
             loss_bbox = self.loss_bbox(
                 pos_decoded_bbox_preds,
                 pos_decoded_target_preds,
-                weight=pos_centerness_targets,
+                # weight=pos_centerness_targets,
                 avg_factor=centerness_denorm)
-            pos_inds = (flatten_point_dis > 0).nonzero().reshape(-1)
-            pos_centerness = flatten_centerness[pos_inds]
-            pos_centerness_targets = flatten_point_dis[pos_inds]
-            loss_centerness = self.loss_centerness(
-                pos_centerness, pos_centerness_targets, avg_factor=num_pos)
+            # pos_inds = (flatten_point_dis > 0).nonzero().reshape(-1)
+            # pos_centerness = flatten_centerness[pos_inds]
+            # pos_centerness_targets = flatten_point_dis[pos_inds]
+            # loss_centerness = self.loss_centerness(
+            #     pos_centerness, pos_centerness_targets, avg_factor=num_pos)
         else:
             loss_bbox = pos_bbox_preds.sum()
             loss_centerness = pos_centerness.sum()
@@ -276,8 +276,8 @@ class MYFCOSHead(AnchorFreeHead):
 
         return dict(
             loss_cls=loss_cls,
-            loss_bbox=loss_bbox,
-            loss_centerness=loss_centerness)
+            loss_bbox=loss_bbox,)
+            # loss_centerness=loss_centerness)
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
     def get_bboxes(self,
