@@ -151,11 +151,11 @@ class SingleStageDetector(BaseDetector):
 
         x = self.extract_feat(label_img)
         label_losses = self.bbox_head.forward_train(x, label_img_metas, label_gt_bboxes,
-                                              label_gt_labels, label_gt_points, gt_bboxes_ignore)
+                                              label_gt_labels, label_gt_points, gt_bboxes_ignore, supervised_type='box')
 
         x = self.extract_feat(unlabel_img)
         unlabel_losses = self.bbox_head.forward_train(x, unlabel_img_metas, unlabel_gt_bboxes,
-                                              unlabel_gt_labels, unlabel_gt_points, gt_bboxes_ignore)
+                                              unlabel_gt_labels, unlabel_gt_points, gt_bboxes_ignore, supervised_type='point')
 
         for k in label_losses.keys():
             label_losses[k] += unlabel_losses[k] * label_type2weight[1]

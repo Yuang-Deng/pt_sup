@@ -1,4 +1,5 @@
 import torch
+from torch._C import parse_schema
 import torch.nn as nn
 import torch.nn.functional as F
 from mmcv.cnn import Scale
@@ -76,6 +77,9 @@ class MYFCOSHead(AnchorFreeHead):
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
                      loss_weight=1.0),
+                 loss_reweight=dict(
+                     type='SmoothL1Loss',
+                     loss_weight=1.0),
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
                  init_cfg=dict(
                      type='Normal',
@@ -101,6 +105,7 @@ class MYFCOSHead(AnchorFreeHead):
             init_cfg=init_cfg,
             **kwargs)
         self.loss_centerness = build_loss(loss_centerness)
+        self.loss_reweight = build_loss(loss_reweight)
 
     def _init_layers(self):
         """Initialize layers of the head."""
@@ -169,7 +174,8 @@ class MYFCOSHead(AnchorFreeHead):
              gt_labels,
              img_metas,
              gt_points,
-             gt_bboxes_ignore=None):
+             gt_bboxes_ignore=None,
+             supervised_type='box'):
         """Compute loss of the head.
 
         Args:
@@ -225,8 +231,16 @@ class MYFCOSHead(AnchorFreeHead):
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
         bg_class_ind = self.num_classes
-        pos_inds = ((flatten_point_dis > 0) & ((flatten_labels >= 0)
+        if supervised_type == 'box':
+            pos_inds = ((flatten_labels >= 0)
+                    & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
+        elif supervised_type == 'point':
+            pos_inds = ((flatten_point_dis > 0) & ((flatten_labels >= 0)
                     & (flatten_labels < bg_class_ind))).nonzero().reshape(-1)
+        else:
+            raise NotImplementedError('Only supports distributed mode')
+        # pos_inds = ((flatten_point_dis > 0) & ((flatten_labels >= 0)
+        #             & (flatten_labels < bg_class_ind))).nonzero().reshape(-1)
         # pos_inds = ((flatten_labels >= 0)
         #             & (flatten_labels < bg_class_ind)).nonzero().reshape(-1)
         # pos_centerness_inds = ((flatten_point_dis > 0)).nonzero().reshape(-1)
@@ -239,9 +253,15 @@ class MYFCOSHead(AnchorFreeHead):
         pos_bbox_preds = flatten_bbox_preds[pos_inds]
         pos_centerness = flatten_centerness[pos_inds]
         pos_bbox_targets = flatten_bbox_targets[pos_inds]
+        if supervised_type == 'box':
+            pos_centerness_targets = self.centerness_target(pos_bbox_targets)
+        elif supervised_type == 'point':
+            pos_centerness_targets = flatten_point_dis[pos_inds]
+        else:
+            raise NotImplementedError('Only supports distributed mode')
         # pos_centerness_targets = self.centerness_target(flatten_bbox_targets)
         # centerness_targets = self.my_centerness_target(flatten_point_dis)
-        pos_centerness_targets = flatten_point_dis[pos_inds]
+        # pos_centerness_targets = flatten_point_dis[pos_inds]
         # centerness weighted iou loss
         # TODO 目前不知道有啥用
         centerness_denorm = max(
@@ -257,11 +277,19 @@ class MYFCOSHead(AnchorFreeHead):
                 pos_decoded_target_preds,
                 weight=pos_centerness_targets,
                 avg_factor=centerness_denorm)
-            pos_inds = (flatten_point_dis > 0).nonzero().reshape(-1)
-            pos_centerness = flatten_centerness[pos_inds]
-            pos_centerness_targets = flatten_point_dis[pos_inds]
-            loss_centerness = self.loss_centerness(
-                pos_centerness, pos_centerness_targets, avg_factor=num_pos)
+            # TODO 这样真的行吗
+            if supervised_type == 'box':
+                loss_centerness = self.loss_centerness(
+                    pos_centerness, pos_centerness_targets, avg_factor=num_pos)
+            elif supervised_type == 'point':
+                pos_inds = (flatten_point_dis > 0).nonzero().reshape(-1)
+                pos_centerness = flatten_centerness[pos_inds]
+                pos_centerness_targets = flatten_point_dis[pos_inds]
+                loss_centerness = self.loss_reweight(
+                    pos_centerness, pos_centerness_targets, avg_factor=num_pos)
+            else:
+                raise NotImplementedError('Only supports distributed mode')
+            
         else:
             loss_bbox = pos_bbox_preds.sum()
             loss_centerness = pos_centerness.sum()
@@ -667,9 +695,9 @@ class MYFCOSHead(AnchorFreeHead):
         # point_dis_target = point_dis.min(-1)[0]
         # TODO 不同level用不同的阈值
         # zero = torch.zeros_like(point_dis_target)
-        centerness_range = regress_ranges[..., 0, 1] / 2
+        centerness_range = regress_ranges[..., 0, 1] / 4
         centerness_range = centerness_range[:, None].expand(point_dis.shape[0], point_dis.shape[1])
-        bandary = torch.ones_like(centerness_range) * 500
+        bandary = torch.ones_like(centerness_range) * 250
         centerness_range = torch.where(centerness_range > bandary, bandary, centerness_range)
         zero = torch.zeros_like(centerness_range)
         ones = torch.ones_like(centerness_range) * 2
@@ -678,7 +706,7 @@ class MYFCOSHead(AnchorFreeHead):
         # point_dis_target = torch.where(point_dis <= centerness_range, 
         #                                 (centerness_range - point_dis) / (centerness_range + point_dis), zero)
         point_dis_target = torch.where(point_dis <= centerness_range, 
-                                        (centerness_range - point_dis) / ((centerness_range) / 4), zero)
+                                        (centerness_range - point_dis) / ((centerness_range) / 2), zero)
         # point_dis_target = torch.where((point_dis <= centerness_range) & (point_dis >= (centerness_range / 2)), 
         #                                 ones, zero)       
         # point_dis_target = torch.where(point_dis <= centerness_range, 

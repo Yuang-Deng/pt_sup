@@ -40,10 +40,13 @@ model = dict(
             alpha=0.25,
             loss_weight=1.0),
         loss_bbox=dict(type='IoULoss', loss_weight=1.0),
-        # loss_centerness=dict(
-        #     type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)),
         loss_centerness=dict(
-            type='SmoothL1Loss', loss_weight=1.0)),
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        # loss_centerness=dict(
+        #     type='SmoothL1Loss', loss_weight=1.0),
+        loss_reweight=dict(
+            type='SmoothL1Loss', loss_weight=1.0),
+        ),
     # training and testing settings
     train_cfg=dict(
         label_type2weight=[1, 1, 1],
