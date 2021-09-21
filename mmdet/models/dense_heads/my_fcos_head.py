@@ -706,7 +706,7 @@ class MYFCOSHead(AnchorFreeHead):
         # point_dis_target = torch.where(point_dis <= centerness_range, 
         #                                 (centerness_range - point_dis) / (centerness_range + point_dis), zero)
         point_dis_target = torch.where(point_dis <= centerness_range, 
-                                        (centerness_range - point_dis) / ((centerness_range) / 2), zero)
+                                        (centerness_range - point_dis) / ((centerness_range)), zero)
         # point_dis_target = torch.where((point_dis <= centerness_range) & (point_dis >= (centerness_range / 2)), 
         #                                 ones, zero)       
         # point_dis_target = torch.where(point_dis <= centerness_range, 
@@ -730,7 +730,7 @@ class MYFCOSHead(AnchorFreeHead):
         # zero = torch.ones_like(gt_point_dis) * INF
         # gt_point_dis = torch.where(gt_point_dis > 50.0 , zero, gt_point_dis)
 
-        return labels, bbox_targets, point_dis_target
+        return labels, bbox_targets, point_max
 
     def centerness_target(self, pos_bbox_targets):
         """Compute centerness targets.
