@@ -114,7 +114,7 @@ test_pipeline = [
 ]
 data = dict(
     samples_per_gpu=6,
-    workers_per_gpu=8,
+    workers_per_gpu=0,
     train=dict(pipeline=train_pipeline),
     val=dict(pipeline=val_pipeline),
     test=dict(pipeline=test_pipeline))

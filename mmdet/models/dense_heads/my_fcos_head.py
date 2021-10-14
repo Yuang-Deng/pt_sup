@@ -306,6 +306,7 @@ class MYFCOSHead(AnchorFreeHead):
             loss_cls=loss_cls,
             loss_bbox=loss_bbox,
             loss_centerness=loss_centerness)
+            # loss_bbox=loss_bbox,)
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
     def get_bboxes(self,
@@ -716,6 +717,7 @@ class MYFCOSHead(AnchorFreeHead):
         
         point_max = point_dis_target.max(-1)[0]
         point_mean = point_dis_target.mean(-1)
+        nonzero_num = torch.count_nonzero(point_dis_target, dim=-1)
         point_sum = point_dis_target.sum(-1)
         zero = torch.zeros_like(point_sum)
         point_dis_target = torch.where(point_sum != point_max, point_mean, point_max)
@@ -730,7 +732,7 @@ class MYFCOSHead(AnchorFreeHead):
         # zero = torch.ones_like(gt_point_dis) * INF
         # gt_point_dis = torch.where(gt_point_dis > 50.0 , zero, gt_point_dis)
 
-        return labels, bbox_targets, point_max
+        return labels, bbox_targets, point_dis_target
 
     def centerness_target(self, pos_bbox_targets):
         """Compute centerness targets.

@@ -20,7 +20,7 @@ class SSODGroupSampler(Sampler):
         self.num_samples = 0
         self.epoch = 0
         self.warm_epoch = warm_epoch
-        if len(self.group_sizes) == 2:
+        if len(self.group_sizes) == 4:
             samples = self.samples_per_gpu // 2
             labeled_size = self.group_sizes[0]
             unlabeled_size = self.group_sizes[1]
@@ -33,15 +33,15 @@ class SSODGroupSampler(Sampler):
                     size / self.samples_per_gpu)) * self.samples_per_gpu
 
     def __iter__(self):
-        self.num_samples = 0
         if len(self.group_sizes) == 4:
+            self.num_samples = 0
             samples = self.samples_per_gpu // 2
             hori_labeled_indice = np.where(self.flag == 0)[0]
-            hori_unlabeled_indice = np.where(self.flag == 1)[0]
+            hori_unlabeled_indice = np.where(self.flag == 2)[0]
             np.random.shuffle(hori_labeled_indice)
             np.random.shuffle(hori_unlabeled_indice)
 
-            vert_labeled_indice = np.where(self.flag == 2)[0]
+            vert_labeled_indice = np.where(self.flag == 1)[0]
             vert_unlabeled_indice = np.where(self.flag == 3)[0]
             np.random.shuffle(vert_labeled_indice)
             np.random.shuffle(vert_unlabeled_indice)
@@ -99,26 +99,25 @@ class SSODGroupSampler(Sampler):
             indices = indices.astype(np.int64).tolist()
             return iter(indices)
         else:
-            samples = self.samples_per_gpu // 2
-            labeled_size = self.group_sizes[0]
-            unlabeled_size = self.group_sizes[1]
-            labeled_indice = np.where(self.flag == 0)[0]
-            unlabeled_indice = np.where(self.flag == 1)[0]
-            np.random.shuffle(labeled_indice)
-            np.random.shuffle(unlabeled_indice)
-            larger_size = max(labeled_size, unlabeled_size)
-            labeled_num_extra = int(np.ceil(larger_size / samples)
-                            ) * samples - len(labeled_indice)
-            unlabeled_num_extra = int(np.ceil(larger_size / samples)
-                            ) * samples - len(unlabeled_indice)
-            labeled_indice = np.concatenate(
-                [labeled_indice, np.random.choice(labeled_indice, labeled_num_extra)])
-            unlabeled_indice = np.concatenate(
-                [unlabeled_indice, np.random.choice(unlabeled_indice, unlabeled_num_extra)])
             indices = []
-            for i in np.random.permutation(range(len(labeled_indice) // samples)):
-                indices.append(labeled_indice[i * samples:(i + 1) * samples])
-                indices.append(unlabeled_indice[i * samples:(i + 1) * samples])
+            # self.group_sizes = self.group_sizes[:2]
+            for i, size in enumerate(self.group_sizes):
+                if size == 0:
+                    continue
+                indice = np.where(self.flag == i)[0]
+                assert len(indice) == size
+                np.random.shuffle(indice)
+                num_extra = int(np.ceil(size / self.samples_per_gpu)
+                                ) * self.samples_per_gpu - len(indice)
+                indice = np.concatenate(
+                    [indice, np.random.choice(indice, num_extra)])
+                indices.append(indice)
+            indices = np.concatenate(indices)
+            indices = [
+                indices[i * self.samples_per_gpu:(i + 1) * self.samples_per_gpu]
+                for i in np.random.permutation(
+                    range(len(indices) // self.samples_per_gpu))
+            ]
             indices = np.concatenate(indices)
             indices = indices.astype(np.int64).tolist()
             return iter(indices)
@@ -175,7 +174,7 @@ class SSODDistributedGroupSampler(Sampler):
         self.group_sizes = np.bincount(self.flag)
 
         self.num_samples = 0
-        if len(self.group_sizes) == 2:
+        if len(self.group_sizes) == 4:
             samples = self.samples_per_gpu // 2
             labeled_size = self.group_sizes[0]
             unlabeled_size = self.group_sizes[1]
@@ -198,8 +197,8 @@ class SSODDistributedGroupSampler(Sampler):
         g.manual_seed(self.epoch + self.seed)
 
         indices = []
-        self.num_samples = 0
         if len(self.group_sizes) == 4:
+            self.num_samples = 0
             samples = self.samples_per_gpu // 2
             
             # labeled_size_hori = self.group_sizes[0]
@@ -290,8 +289,14 @@ class SSODDistributedGroupSampler(Sampler):
             # subsample
             offset = self.num_samples * self.rank
             indices = indices[offset:offset + self.num_samples]
+            return iter(indices)
             # assert len(indices) == self.num_samples
         else:
+            # deterministically shuffle based on epoch
+            g = torch.Generator()
+            g.manual_seed(self.epoch + self.seed)
+    
+            indices = []
             for i, size in enumerate(self.group_sizes):
                 if size > 0:
                     indice = np.where(self.flag == i)[0]
@@ -311,9 +316,9 @@ class SSODDistributedGroupSampler(Sampler):
                         indice.extend(tmp)
                     indice.extend(tmp[:extra % size])
                     indices.extend(indice)
-
+    
             assert len(indices) == self.total_size
-
+    
             indices = [
                 indices[j] for i in list(
                     torch.randperm(
@@ -321,12 +326,13 @@ class SSODDistributedGroupSampler(Sampler):
                 for j in range(i * self.samples_per_gpu, (i + 1) *
                                self.samples_per_gpu)
             ]
-
+    
             # subsample
             offset = self.num_samples * self.rank
             indices = indices[offset:offset + self.num_samples]
             assert len(indices) == self.num_samples
-        return iter(indices)
+    
+            return iter(indices)
 
     def __len__(self):
         return self.num_samples
